@@ -19,7 +19,7 @@ Each ticket gets a unique ID (`Ticket-YYYYMMDD-XXXX`) and is tagged in post meta
 2. Create a **Slash Command** (trigger word: `ticket`, URL: `http://your-host:8080/ticket`, method: POST) and save its token (`SLASH_TOKEN`)
 3. In **System Console > Integrations**, enable custom slash commands
 
-### Run with Podman/Docker
+### Run with Podman
 
 ```bash
 podman build -t mattermost-ticket .
@@ -44,16 +44,52 @@ podman run -d \
 | `SLASH_TOKEN` | Slash command verification token (Mattermost -> service) |
 | `CALLBACK_URL` | Public URL of this service, reachable by Mattermost |
 
-### SSL / internal CA
+### Deploy with Quadlet
 
-If your Mattermost uses an internal CA, mount the certificate bundle and set `SSL_CERT_FILE`:
+Create the unit file:
 
 ```bash
-podman run -d \
-  ...
-  -v /etc/pki/tls/certs/ca-bundle.crt:/etc/ssl/certs/ca-bundle.crt:ro \
-  -e SSL_CERT_FILE="/etc/ssl/certs/ca-bundle.crt" \
-  mattermost-ticket
+mkdir -p ~/.config/containers/systemd
+```
+
+`~/.config/containers/systemd/ticket-service.container`:
+
+```ini
+[Unit]
+Description=Mattermost Ticket Service
+
+[Container]
+Image=localhost/mattermost-ticket:latest
+PublishPort=8080:8080
+Environment=MATTERMOST_URL=https://your-mattermost-instance
+Environment=BOT_TOKEN=bot-token-here
+Environment=SLASH_TOKEN=slash-command-token-here
+Environment=CALLBACK_URL=http://this-service-host:8080
+Volume=/etc/pki/tls/certs/ca-bundle.crt:/etc/ssl/certs/ca-bundle.crt:ro
+Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
+HealthCmd=curl -sf http://localhost:8080/health
+HealthInterval=30s
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
+```
+
+Then reload and start:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user start ticket-service
+systemctl --user enable ticket-service
+systemctl --user status ticket-service
+```
+
+Check logs:
+
+```bash
+journalctl --user -u ticket-service -f
 ```
 
 ## Health check
@@ -63,13 +99,3 @@ GET /health
 ```
 
 Returns `{"status": "ok"}`.
-
-## Air-gapped deployment
-
-Build the image on a connected machine, then transfer it:
-
-```bash
-podman save -o mattermost-ticket.tar mattermost-ticket
-# transfer the .tar file to the target host
-podman load -i mattermost-ticket.tar
-```
